@@ -1,5 +1,5 @@
 /* Offline support: keeps the whole app on the phone after the first visit. Change VERSION when updating the app. */
-const VERSION = "bb-v1";
+const VERSION = "bb-v2";
 const FONTS = "bb-fonts";
 const CORE = ["./", "./index.html", "./jszip.min.js", "./manifest.webmanifest",
   "./icons/icon-192.png", "./icons/icon-512.png", "./icons/maskable-512.png", "./icons/apple-touch-icon.png"];

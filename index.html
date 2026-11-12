@@ -162,7 +162,12 @@ th{font-size:.72rem;letter-spacing:.07em;text-transform:uppercase;color:var(--mu
 .clock{font-family:var(--display);font-size:1.6rem;font-variant-numeric:tabular-nums;min-width:58px}
 .clock.done{color:var(--accent)}
 .tbtn{border:1px solid var(--line);background:var(--chip);color:var(--ink);font:700 .85rem var(--body);padding:8px 9px;border-radius:9px;cursor:pointer}
-.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(84px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:999px;font-weight:700;font-size:.9rem;z-index:6;max-width:calc(100% - 32px);text-align:center}
+.toast{position:fixed;left:0;right:0;margin-inline:auto;width:fit-content;bottom:calc(84px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:999px;font-weight:700;font-size:.9rem;z-index:6;max-width:calc(100% - 32px);text-align:center;display:flex;align-items:center;gap:12px}
+.toastbtn{background:none;border:0;color:inherit;font:700 .9rem var(--body);text-decoration:underline;text-underline-offset:3px;padding:6px 2px;cursor:pointer;flex:none}
+.undo{display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--chip);border-radius:12px;padding:8px 8px 8px 12px;font-size:.88rem}
+.undo span{min-width:0;color:var(--muted)}
+.undo b{color:var(--ink)}
+.more{align-self:flex-start}
 
 /* PB celebration */
 .cheer{position:fixed;inset:0;z-index:20;background:var(--scrim);display:grid;place-items:center;
@@ -181,7 +186,7 @@ th{font-size:.72rem;letter-spacing:.07em;text-transform:uppercase;color:var(--mu
 <body>
 <div class="wrap">
   <section class="card" id="installCard" hidden>
-    <div class="pairhead"><strong>Install the app</strong><button type="button" class="link" id="installDismiss">Not now</button></div>
+    <div class="pairhead"><strong>Install the app</strong><button type="button" class="link" id="installDismiss">Hide</button></div>
     <p class="sub" id="installHow"></p>
     <div class="row"><button type="button" class="btn primary" id="installBtn" hidden>Install</button></div>
   </section>
@@ -202,6 +207,8 @@ th{font-size:.72rem;letter-spacing:.07em;text-transform:uppercase;color:var(--mu
         <div class="status" id="backupLine" aria-live="polite"></div>
       </div>
     </header>
+
+    <div class="undo" id="undoRow" hidden><span>Last change: <b id="undoLabel"></b></span><button type="button" class="btn" id="undoBtn">Undo</button></div>
 
     <div class="phase">
       <span class="pill" id="phasePill" style="align-self:flex-start">Re-entry · session 1 of 4</span>
@@ -234,6 +241,8 @@ th{font-size:.72rem;letter-spacing:.07em;text-transform:uppercase;color:var(--mu
       <textarea id="note" placeholder="Shoulder felt fine on floor press, gym was busy…"></textarea>
     </div>
 
+    <div class="row" id="clearRow"><button type="button" class="btn" id="clearSession">Clear this session</button><span class="sub" style="align-self:center">Empties the boxes above without saving.</span></div>
+
     <details class="card" id="homeCard">
       <summary><span>Home routine · about 10 min</span></summary>
       <ul class="check" id="homeList"></ul>
@@ -243,6 +252,7 @@ th{font-size:.72rem;letter-spacing:.07em;text-transform:uppercase;color:var(--mu
     <section class="card">
       <h2>Recent</h2>
       <div class="history" id="history"><p class="sub">Your sessions will appear here once you save one.</p></div>
+      <button type="button" class="btn more" id="historyMore" hidden></button>
     </section>
 
     <section class="card" id="backupCard">
@@ -255,6 +265,7 @@ th{font-size:.72rem;letter-spacing:.07em;text-transform:uppercase;color:var(--mu
       </div>
       <p class="sub">On iPhone, choose Save to Files. On Android, the file goes to your Downloads. It opens in Excel, Numbers or Google Sheets.</p>
       <p class="sub" id="offlineInfo"></p>
+      <p class="sub" id="storageInfo"></p>
     </section>
   </div>
 
@@ -302,7 +313,7 @@ th{font-size:.72rem;letter-spacing:.07em;text-transform:uppercase;color:var(--mu
     <button type="button" class="btn primary" id="saveGym">Save session</button>
   </div>
 </div>
-<div class="toast" id="toast" hidden></div>
+<div class="toast" id="toast" hidden role="status"><span id="toastMsg"></span><button type="button" class="toastbtn" id="toastUndo" hidden>Undo</button></div>
 <div class="cheer" id="cheer" hidden role="dialog" aria-modal="true" aria-labelledby="cheerTitle">
   <canvas id="confetti"></canvas>
   <div class="box">
@@ -531,11 +542,15 @@ function checkPB(slot){
   const {v,sets}=currentSets(slot), prior=priorBest(v.id), now=bestOf(sets);
   el.hidden = !(prior && now && now.sc > prior.sc + 1e-9);
 }
+let showAllHistory = false;
+const entryLabel = e=> e.kind==="home" ? `home routine (${fmtDate(e.date)})` : `Session ${e.session} (${fmtDate(e.date)})`;
 function renderHistory(){
   const el=$("#history");
   if(!loaded){ el.innerHTML=`<p class="sub">Loading…</p>`; return; }
   if(!log.length){ el.innerHTML=`<p class="sub">Your sessions will appear here once you save one.</p>`; return; }
-  el.innerHTML = log.slice(0,8).map(e=>{
+  const more=$("#historyMore");
+  more.hidden = log.length<=8; more.textContent = showAllHistory ? "Show fewer" : `Show all ${log.length}`;
+  el.innerHTML = log.slice(0, showAllHistory ? log.length : 8).map(e=>{
     let title, sub="";
     if(e.kind==="home"){ title=`<span class="dot H"></span>Home routine`; }
     else{
@@ -682,20 +697,24 @@ document.addEventListener("click", e=>{
   if(t.dataset.min){ state.minutes=Number(t.dataset.min); saveDraft(); renderControls(); renderWorkout(); return; }
   if(t.dataset.copy){
     const slot=t.dataset.copy, v=curVariant(slot), last=lastFor(v.id); if(!last) return;
+    const snap=snapshot("Copied last time's numbers for "+v.n);
     const arr=state.inputs[slot]=state.inputs[slot]||[];
     document.querySelectorAll(`input[data-slot="${slot}"]`).forEach(inp=>{
       const i=Number(inp.dataset.i), f=inp.dataset.f, src=last.sets[i]||last.sets[last.sets.length-1];
       const val = src && src[f]!=null ? String(src[f]) : "";
       inp.value=val; inp.classList.remove("auto"); arr[i]=arr[i]||{}; arr[i][f]=val;
     });
-    saveDraft(); checkPB(slot); return;
+    saveDraft(); checkPB(slot); offerUndo(snap, "Copied last time's numbers"); return;
   }
   if(t.dataset.skip){ state.skipped[t.dataset.skip]=true; saveDraft(); renderWorkout(); return; }
   if(t.dataset.unskip){ delete state.skipped[t.dataset.unskip]; saveDraft(); renderWorkout(); return; }
   if(t.dataset.metric){ prefs.pMetric=t.dataset.metric; savePrefs(); renderProgress(); return; }
   if(t.dataset.range!=null){ prefs.pRange=Number(t.dataset.range); savePrefs(); renderProgress(); return; }
   if(t.dataset.sec){ startTimer(Number(t.dataset.sec)); return; }
-  if(t.dataset.del){ armDelete(t); return; }
+  if(t.dataset.del){ removeEntry(t.dataset.del); return; }
+  if(t.id==="historyMore"){ showAllHistory=!showAllHistory; renderHistory(); return; }
+  if(t.id==="undoBtn" || t.id==="toastUndo"){ doUndo(); return; }
+  if(t.id==="clearSession"){ clearSession(); return; }
   if(t.id==="saveGym"){ saveGym(); return; }
   if(t.id==="saveHome"){ saveHome(); return; }
   if(t.id==="cheerOk"){ closeCheer(); return; }
@@ -712,14 +731,34 @@ document.addEventListener("change", e=>{
   const el=e.target;
   if(el.id==="pEx"){ prefs.pEx=el.value; savePrefs(); renderProgress(); return; }
   if(el.id==="autofill"){ prefs.autofill=el.checked; savePrefs(); renderWorkout(); return; }
-  if(el.tagName==="SELECT" && el.dataset.slot){ state.variant[el.dataset.slot]=Number(el.value); delete state.inputs[el.dataset.slot]; saveDraft(); renderWorkout(); }
+  if(el.tagName==="SELECT" && el.dataset.slot){
+    const sl=el.dataset.slot, had=hasData(sl) && !state.skipped[sl], snap=snapshot("Switched "+curVariant(sl).n);
+    state.variant[sl]=Number(el.value); delete state.inputs[sl]; saveDraft(); renderWorkout();
+    if(had) offerUndo(snap, "Switched exercise: its boxes were emptied");
+  }
   else if(el.type==="checkbox" && el.dataset.bag){ const bag = el.dataset.bag==="h"?state.home:state.warm; bag[el.dataset.bag+el.dataset.i]=el.checked; saveDraft(); }
 });
 document.addEventListener("keydown", e=>{ if(e.key==="Escape" && !$("#cheer").hidden) closeCheer(); });
-function armDelete(btn){
-  if(btn.classList.contains("armed")){ removeEntry(btn.dataset.del); return; }
-  btn.classList.add("armed"); btn.textContent="Tap again to delete";
-  setTimeout(()=>{ if(btn.isConnected){ btn.classList.remove("armed"); btn.textContent="Delete"; } }, 3500);
+/* ---------- undo: one step back for saves, deletes, clears, copies and restores ---------- */
+let undoSnap = null;
+const snapshot = label=>({label, log:JSON.stringify(log), state:JSON.stringify(state)});
+function offerUndo(snap, msg){ undoSnap=snap; renderUndo(); if(msg) toast(msg, true); }
+function renderUndo(){ $("#undoRow").hidden=!undoSnap; if(undoSnap) $("#undoLabel").textContent=undoSnap.label; }
+function doUndo(){
+  if(!undoSnap) return;
+  const s=undoSnap; undoSnap=null;
+  if(!$("#cheer").hidden) closeCheer();
+  log=JSON.parse(s.log); persistLog();
+  const st=JSON.parse(s.state); Object.keys(state).forEach(k=>delete state[k]); Object.assign(state, st); saveDraft();
+  renderAll(); renderBackup(); renderUndo();
+  toast("Undone: "+s.label.charAt(0).toLowerCase()+s.label.slice(1));
+}
+function sessionHasData(){ return !!(state.note && state.note.trim()) || Object.keys(state.skipped).length>0 || Object.keys(state.inputs).some(hasData); }
+function clearSession(){
+  if(!sessionHasData()){ toast("Nothing to clear yet."); return; }
+  const snap=snapshot("Cleared this session");
+  state.inputs={}; state.skipped={}; state.note=""; state.warm={}; saveDraft();
+  renderAll(); offerUndo(snap, "Session cleared");
 }
 
 /* ---------- timer ---------- */
@@ -737,7 +776,7 @@ function tone(freqs, dur){
 
 /* ---------- toast + cheer ---------- */
 let toastT=null;
-function toast(msg){ const t=$("#toast"); t.textContent=msg; t.hidden=false; clearTimeout(toastT); toastT=setTimeout(()=>{t.hidden=true;},2600); }
+function toast(msg, undo){ const t=$("#toast"); $("#toastMsg").textContent=msg; $("#toastUndo").hidden=!undo; t.hidden=false; clearTimeout(toastT); toastT=setTimeout(()=>{t.hidden=true;}, undo?8000:2600); }
 let confettiRAF=null;
 function cheer(pbs){
   $("#cheerTitle").textContent = pbs.length>1 ? `${pbs.length} new PBs!` : "New PB!";
@@ -782,7 +821,7 @@ function findPBs(sets){
   return pbs;
 }
 
-const SW_CACHE = "bb-v1";
+const SW_CACHE = "bb-v2";
 /* ---------- storage: everything lives on this phone ---------- */
 const LOG_KEY = "bb-log", META_KEY = "bb-meta";
 let meta = Object.assign({lastBackup:null}, lsGet(META_KEY)||{});
@@ -797,23 +836,31 @@ function saveGym(){
   if(saveLock) return;
   saveLock = true; $("#saveGym").disabled = true;
   setTimeout(()=>{ saveLock = false; $("#saveGym").disabled = false; }, 1200);
+  const snap=snapshot("Saved Session "+state.session);
   const col=collectSets(), pbs=findPBs(col.sets);
   const entry={ id:"s"+Date.now(), kind:"gym", session:state.session, minutes:state.minutes, date:new Date().toISOString(), sets:col.sets, skipped:col.skipped, pbs, note:(state.note||"").trim().slice(0,500) };
   writeEntry(entry);
   state.inputs={}; state.note=""; state.warm={}; state.skipped={}; state.session = entry.session==="A"?"B":"A";
   saveDraft(); $("#note").value="";
   renderAll(); window.scrollTo({top:0,behavior:"smooth"});
-  if(pbs.length) cheer(pbs);
-  else toast(backupDue() ? `Saved. Next up: Session ${state.session}. Time for a backup too.` : `Saved. Next up: Session ${state.session}`);
+  if(pbs.length){ undoSnap=snap; renderUndo(); cheer(pbs); }
+  else offerUndo(snap, backupDue() ? `Saved. Next up: Session ${state.session}. Time for a backup too.` : `Saved. Next up: Session ${state.session}`);
 }
 let homeLock = false;
 function saveHome(){
   if(homeLock) return;
   homeLock = true; setTimeout(()=>{ homeLock = false; }, 1200);
+  const snap=snapshot("Logged home routine");
   writeEntry({ id:"h"+Date.now(), kind:"home", date:new Date().toISOString() });
-  state.home={}; saveDraft(); renderChecklist($("#homeList"), HOME, state.home, "h"); toast("Home routine logged");
+  state.home={}; saveDraft(); renderChecklist($("#homeList"), HOME, state.home, "h"); offerUndo(snap, "Home routine logged");
 }
-function removeEntry(id){ log = log.filter(e=>e.id!==id); persistLog(); onLog(); toast("Deleted"); }
+function removeEntry(id){
+  const e=log.find(x=>x.id===id); if(!e) return;
+  const snap=snapshot("Deleted "+entryLabel(e));
+  log = log.filter(x=>x.id!==id); persistLog();
+  if(!Object.keys(state.inputs).some(hasData)){ state.session=nextSession(); saveDraft(); renderControls(); renderWarm(); }
+  onLog(); offerUndo(snap, "Deleted "+entryLabel(e));
+}
 function recomputePBs(){
   const best = {};
   log.slice().reverse().forEach(e=>{
@@ -1023,28 +1070,45 @@ async function restoreFrom(file){
   if(!entries.length){ toast("No sessions found in that file."); return; }
   const have=new Set(log.map(x=>x.id)), add=entries.filter(x=>!have.has(x.id));
   if(!add.length){ toast("Nothing new: everything in that backup is already here."); return; }
+  const snap=snapshot(`Restored ${add.length} ${add.length===1?"entry":"entries"} from a backup`);
   log=log.concat(add); sortLog(); recomputePBs(); persistLog();
   if(!Object.keys(state.inputs).length){ state.session=nextSession(); saveDraft(); }
   renderAll();
-  toast(`Restored ${add.length} ${add.length===1?"entry":"entries"} from your backup`);
+  offerUndo(snap, `Restored ${add.length} ${add.length===1?"entry":"entries"} from your backup`);
 }
 
 /* ---------- install + offline ---------- */
-const standalone = (window.matchMedia && matchMedia("(display-mode: standalone)").matches) || navigator.standalone===true;
+function isStandalone(){
+  try{
+    const mm=m=>!!(window.matchMedia && matchMedia(`(display-mode: ${m})`).matches);
+    return mm("standalone") || mm("fullscreen") || mm("minimal-ui") || mm("window-controls-overlay") || navigator.standalone===true || document.referrer.startsWith("android-app://");
+  }catch(e){ return false; }
+}
+let standalone = isStandalone();
+const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform==="MacIntel" && navigator.maxTouchPoints>1);
+if(standalone && !prefs.installed){ prefs.installed=true; savePrefs(); }
+try{ matchMedia("(display-mode: standalone)").addEventListener("change", ()=>{ standalone=isStandalone(); renderInstall(); renderStorage(); }); }catch(e){}
 let deferredPrompt=null;
 function renderInstall(){
   const card=$("#installCard");
-  if(standalone || prefs.installDismissed){ card.hidden=true; return; }
-  const ios=/iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform==="MacIntel" && navigator.maxTouchPoints>1);
-  $("#installHow").textContent = ios
-    ? "Tap the Share button, then Add to Home Screen. It then opens like an app and works with no signal."
+  if(standalone || prefs.installed || prefs.installDismissed){ card.hidden=true; return; }
+  $("#installHow").textContent = isIOS
+    ? "Tap the Share button, then Add to Home Screen, and keep Open as Web App switched on. Already done it? Tap Hide and open the app from your home screen instead."
     : deferredPrompt ? "Install it on this phone so it opens like an app and works with no signal."
     : "Open your browser menu and choose Install app or Add to Home screen. It then opens like an app and works with no signal.";
   $("#installBtn").hidden = !deferredPrompt;
   card.hidden=false;
 }
 window.addEventListener("beforeinstallprompt", e=>{ e.preventDefault(); deferredPrompt=e; renderInstall(); });
-window.addEventListener("appinstalled", ()=>{ deferredPrompt=null; $("#installCard").hidden=true; toast("Installed. Open it from your home screen."); });
+window.addEventListener("appinstalled", ()=>{ deferredPrompt=null; prefs.installed=true; savePrefs(); renderInstall(); toast("Installed. Open it from your home screen."); });
+/* where the data lives */
+function renderStorage(){
+  const el=$("#storageInfo"); if(!el) return;
+  let t="Your log is stored inside this app on this phone. It works with no signal and nothing is sent online. Deleting the app or clearing its website data erases it, which is why backups matter.";
+  if(isIOS && !standalone) t+=" You're in Safari right now: on iPhone, Safari and the home-screen app keep separate logs, so log your sessions in the home-screen app.";
+  el.textContent=t;
+  try{ navigator.storage && navigator.storage.persisted && navigator.storage.persisted().then(ok=>{ if(ok) el.textContent=t+" Your phone has marked it as protected storage, so it won't be cleared automatically to free up space."; }); }catch(e){}
+}
 function renderOffline(ok){ $("#offlineInfo").textContent = ok===true ? "Ready to use offline on this phone." : ok===false ? "This browser can't keep the app offline. Use Safari on iPhone or Chrome on Android." : "Getting ready for offline use…"; }
 if("serviceWorker" in navigator){
   renderOffline(null);
@@ -1071,7 +1135,7 @@ document.addEventListener("click", e=>{
 $("#restoreFile").addEventListener("change", e=>{ const f=e.target.files && e.target.files[0]; if(f) restoreFrom(f); e.target.value=""; });
 log = lsGet(LOG_KEY) || []; sortLog(); loaded = true;
 route();
-renderAll(); renderBackup(); renderInstall();
+renderAll(); renderBackup(); renderInstall(); renderStorage(); renderUndo();
 })();
 </script>
 

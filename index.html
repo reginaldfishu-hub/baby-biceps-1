@@ -106,12 +106,22 @@ select{font:inherit;font-weight:700;color:var(--ink);background:var(--chip);bord
 .sug.up{border-left-color:var(--go);color:var(--go);font-weight:700}
 .pbx{background:var(--plateB);color:var(--plateInk);border-radius:999px;padding:3px 10px;font-weight:700;font-size:.8rem}
 .sets{display:flex;flex-direction:column;gap:6px}
-.set{display:grid;grid-template-columns:22px 1fr auto 1fr auto;gap:6px;align-items:center}
+.set{display:grid;grid-template-columns:22px 1fr auto 1fr auto auto;gap:6px;align-items:center}
 .set .sn{font-family:var(--display);font-size:1.1rem;color:var(--muted);text-align:center}
 .set input{width:100%;min-width:0;font:700 1.05rem var(--body);font-variant-numeric:tabular-nums;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:9px;padding:9px 10px}
 .set input.auto{color:var(--muted);border-style:dashed}
 .set input::placeholder{color:var(--muted);font-weight:400;opacity:.8}
-.set .u{font-size:.78rem;color:var(--muted);min-width:34px}
+.set .u{font-size:.75rem;color:var(--muted);min-width:26px}
+.rpeb{min-width:46px;height:40px;border:1px dashed var(--line);background:var(--bg);color:var(--muted);font:700 .78rem var(--body);border-radius:9px;cursor:pointer;padding:0 6px;font-variant-numeric:tabular-nums}
+.rpeb.on{border-style:solid;border-color:var(--ink);color:var(--ink)}
+.rpeb[aria-expanded="true"]{border-color:var(--plateA);color:var(--plateA)}
+.rpepick{display:flex;flex-direction:column;gap:6px;background:var(--bg);border-radius:10px;padding:10px}
+.rpepick .sub{font-size:.8rem}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{min-width:44px;height:40px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:700 .9rem var(--body);border-radius:9px;cursor:pointer;font-variant-numeric:tabular-nums}
+.chip[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.chip.clear{min-width:0;padding:0 10px;font-weight:400;color:var(--muted)}
+.setctl{display:flex;gap:8px;align-items:center}
 .row{display:flex;gap:8px;flex-wrap:wrap}
 .btn{border:1px solid var(--line);background:var(--chip);color:var(--ink);font:700 .9rem var(--body);padding:8px 12px;border-radius:9px;cursor:pointer}
 .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
@@ -376,6 +386,11 @@ const variantOf = id=>{ for(const k in SLOTS){ const v=SLOTS[k].find(x=>x.id===i
 const curVariant = slot=>{ const vs=SLOTS[slot]; return vs[Math.min(state.variant[slot]||0, vs.length-1)]; };
 const score = (w,r)=> (Number(w)||0)*(1+(Number(r)||0)/30) + (Number(r)||0)/1000; // weight dominates, reps break ties; timed holds rank by seconds
 const setTxt = (v,s)=> (isNum(s.w)&&Number(s.w)>0 ? fmtW(s.w)+(v&&v.bw?" kg+":" kg")+" × " : "") + (s.r??"");
+const setTxtR = (v,s)=> setTxt(v,s) + (isNum(s.rpe) ? " @"+fmtW(s.rpe) : "");
+const RPE_OF = {"3 RIR":"RPE 7","2 RIR":"RPE 8","1–2 RIR":"RPE 8–9","0–1 RIR":"RPE 9–10"};
+const RPE_VALS = [6,6.5,7,7.5,8,8.5,9,9.5,10];
+const MAX_SETS = 8;
+let rpeOpen = null;   // "slot:i" of the open RPE picker
 function lsGet(k){ try{ const v=localStorage.getItem(k); return v?JSON.parse(v):null; }catch(e){ return null; } }
 function lsSet(k,v){ try{ if(v===null) localStorage.removeItem(k); else localStorage.setItem(k,JSON.stringify(v)); }catch(e){} }
 
@@ -391,7 +406,8 @@ const state = {
   inputs: draft.inputs || {},     // what the user typed: inputs[slot][i] = {w,r}
   note: draft.note || "",
   warm: draft.warm || {}, home: draft.home || {},
-  skipped: draft.skipped || {}
+  skipped: draft.skipped || {},
+  sets: draft.sets || {}          // sets[slot] = number of set rows the user chose this session
 };
 function saveDraft(){ lsSet("bb-draft", state); }
 function hasData(slot){ return !!state.skipped[slot] || (state.inputs[slot]||[]).some(x=>x && ((x.w!=null&&x.w!=="") || (x.r!=null&&x.r!==""))); }
@@ -473,7 +489,16 @@ function renderWarm(){
   const w=WARM[state.session]; $("#warmTime").textContent=w.time;
   renderChecklist($("#warmList"), w.items, state.warm, "w"+state.session);
 }
-function exHTML(slot, setsN, effort){
+function baseSets(slot){ return SESS[state.session].core.flat().includes(slot) ? phase().sets : 2; }
+function filledRows(slot){ const a=state.inputs[slot]||[]; let n=0; a.forEach((x,i)=>{ if(x && ((x.w!=null&&x.w!=="")||(x.r!=null&&x.r!=="")||isNum(x.rpe))) n=i+1; }); return n; }
+function setRows(slot){
+  if(state.sets[slot]!=null) return state.sets[slot];
+  const v=curVariant(slot), last=lastFor(v.id);
+  const lastN = last && phase().key!=="return" ? last.sets.length : 0;   // did extra sets last time? start with that many
+  return Math.min(MAX_SETS, Math.max(baseSets(slot), lastN, filledRows(slot)));
+}
+function exHTML(slot, baseN, effort){
+  const setsN = setRows(slot);
   const vs=SLOTS[slot], v=curVariant(slot), vi=vs.indexOf(v);
   if(state.skipped[slot]){
     return `<div class="ex skipped"><div class="exname">${esc(v.n)}</div><div class="row" style="align-items:center"><span class="pill">Skipped</span><button type="button" class="btn" data-unskip="${slot}">Undo</button></div></div>`;
@@ -484,7 +509,7 @@ function exHTML(slot, setsN, effort){
   const nameBlock = vs.length>1
     ? `<select id="var-${slot}" data-slot="${slot}" aria-label="Exercise">${vs.map((x,i)=>`<option value="${i}" ${i===vi?"selected":""}>${esc(x.n)}${x.t?" · "+esc(x.t):""}</option>`).join("")}</select>`
     : `<div class="exname">${esc(v.n)}</div>`;
-  const lastTxt = last ? `Last (${esc(fmtDate(last.date))}): <b class="num">${last.sets.map(s=>esc(setTxt(v,s))).join(" · ")}</b>` : "No log yet. Pick a weight you could lift a few more times than the target.";
+  const lastTxt = last ? `Last (${esc(fmtDate(last.date))}): <b class="num">${last.sets.map(s=>esc(setTxtR(v,s))).join(" · ")}</b>` : "No log yet. Pick a weight you could lift a few more times than the target.";
   const sugTxt = sug && sug.note ? `<div class="sug${sug.up?" up":""}">${esc(sug.note)}</div>` : "";
   const inp = state.inputs[slot]||[];
   let rows="";
@@ -494,15 +519,21 @@ function exHTML(slot, setsN, effort){
     const typedW = x.w!==undefined;
     const wVal = effectiveW(slot,i,sug);
     const rPh = sug && sug.up ? range : (ls&&isNum(ls.r)?ls.r:range);
+    const open = rpeOpen===slot+":"+i, rv = isNum(x.rpe) ? Number(x.rpe) : null;
     rows += `<div class="set"><span class="sn">${i+1}</span>
       <input id="in-${slot}-${i}-w" class="${!typedW&&wVal!==""?"auto":""}" data-slot="${slot}" data-i="${i}" data-f="w" inputmode="decimal" autocomplete="off" aria-label="Set ${i+1} weight" placeholder="${v.bw?"0":"kg"}" value="${esc(wVal)}"><span class="u">${v.bw?"+kg":"kg"}</span>
-      <input id="in-${slot}-${i}-r" data-slot="${slot}" data-i="${i}" data-f="r" inputmode="numeric" autocomplete="off" aria-label="Set ${i+1} ${esc(v.u)}" placeholder="${esc(rPh)}" value="${esc(x.r??"")}"><span class="u">${esc(unitShort)}</span></div>`;
+      <input id="in-${slot}-${i}-r" data-slot="${slot}" data-i="${i}" data-f="r" inputmode="numeric" autocomplete="off" aria-label="Set ${i+1} ${esc(v.u)}" placeholder="${esc(rPh)}" value="${esc(x.r??"")}"><span class="u">${esc(unitShort)}</span>
+      <button type="button" class="rpeb${rv!=null?" on":""}" data-rpe="${slot}:${i}" aria-expanded="${open}" aria-label="Set ${i+1} RPE${rv!=null?" "+fmtW(rv):""}">${rv!=null?"@"+fmtW(rv):"RPE"}</button></div>`;
+    if(open) rows += `<div class="rpepick" role="group" aria-label="Set ${i+1} RPE">
+      <span class="sub">How hard was set ${i+1}? 10 = nothing left, 9 = 1 more rep, 8 = 2 more, 7 = 3 more.</span>
+      <div class="chips">${RPE_VALS.map(n=>`<button type="button" class="chip" data-rpeval="${slot}:${i}:${n}" aria-pressed="${rv===n}">${fmtW(n)}</button>`).join("")}${rv!=null?`<button type="button" class="chip clear" data-rpeval="${slot}:${i}:">Clear</button>`:""}</div></div>`;
   }
   return `<div class="ex" data-ex="${slot}">${nameBlock}
-    <div class="meta"><span class="pill num">${setsN} × ${range} ${esc(v.u)}</span><span class="pill">${esc(effort)}</span><span class="pbx" id="pbx-${slot}" hidden>New best set!</span></div>
+    <div class="meta"><span class="pill num">${setsN} × ${range} ${esc(v.u)}</span><span class="pill">${esc(effort)}${RPE_OF[effort]?" · "+RPE_OF[effort]:""}</span><span class="pbx" id="pbx-${slot}" hidden>New best set!</span></div>
     <div class="last">${lastTxt}</div>
     ${sugTxt}
     <div class="sets">${rows}</div>
+    <div class="setctl"><button type="button" class="btn" data-addset="${slot}" ${setsN>=MAX_SETS?"disabled":""}>+ Set</button><button type="button" class="btn" data-delset="${slot}" ${setsN<=1?"disabled":""}>− Set</button></div>
     <div class="row">${last?`<button type="button" class="btn" data-copy="${slot}">Copy last</button>`:""}<button type="button" class="btn" data-skip="${slot}">Skip</button></div>
   </div>`;
 }
@@ -529,11 +560,13 @@ function renderWorkout(){
 /* live PB badge while typing */
 function currentSets(slot){
   const v=curVariant(slot), sug=suggest(slot), out=[];
-  (state.inputs[slot]||[]).forEach((x,i)=>{ if(!x) return;
+  (state.inputs[slot]||[]).slice(0, setRows(slot)).forEach((x,i)=>{ if(!x) return;
     const typedW = x.w!==undefined && x.w!=="", hasR = x.r!==undefined && x.r!=="";
     if(!typedW && !hasR) return;
     const w = x.w!==undefined ? x.w : effectiveW(slot,i,sug);
-    out.push({w: isNum(w)?Number(w):(w||""), r: isNum(x.r)?Number(x.r):(x.r||"")});
+    const o={w: isNum(w)?Number(w):(w||""), r: isNum(x.r)?Number(x.r):(x.r||"")};
+    if(isNum(x.rpe)) o.rpe=Number(x.rpe);
+    out.push(o);
   });
   return {v, sets:out};
 }
@@ -671,7 +704,7 @@ function renderProgress(){
   drawChart(pts, metric, v);
   $("#pCaption").textContent = METRICS[metric].cap + (v&&v.bw&&metric!=="reps" ? " Weight here is added load." : "");
   // table
-  $("#pTable").innerHTML = all.length ? `<table><thead><tr><th>Date</th><th>Sets</th></tr></thead><tbody>${all.slice().reverse().map(p=>`<tr><td>${esc(fmtDate(p.date))}${p.pb?' <span class="pbx">PB</span>':""}</td><td>${esc(p.sets.map(s=>setTxt(v,s)).join(" · "))}</td></tr>`).join("")}</tbody></table>` : "";
+  $("#pTable").innerHTML = all.length ? `<table><thead><tr><th>Date</th><th>Sets</th></tr></thead><tbody>${all.slice().reverse().map(p=>`<tr><td>${esc(fmtDate(p.date))}${p.pb?' <span class="pbx">PB</span>':""}</td><td>${esc(p.sets.map(s=>setTxtR(v,s)).join(" · "))}</td></tr>`).join("")}</tbody></table>` : "";
   // PB list
   const pbRows=[]; gymLog().forEach(e=>(e.pbs||[]).forEach(pb=>pbRows.push({date:e.date, pb})));
   $("#pPbs").innerHTML = pbRows.length ? pbRows.slice(0,8).map(x=>{ const pv=variantOf(x.pb.id); return `<div class="hrow"><div class="l"><div class="t">${esc(pv?pv.n:x.pb.id)}</div><div class="s">${esc(fmtDate(x.date))} · ${esc(setTxt(pv,x.pb))}${x.pb.prev?` (was ${esc(setTxt(pv,x.pb.prev))})`:""}</div></div></div>`; }).join("") : `<p class="sub">PBs you hit will be listed here.</p>`;
@@ -706,6 +739,21 @@ document.addEventListener("click", e=>{
     });
     saveDraft(); checkPB(slot); offerUndo(snap, "Copied last time's numbers"); return;
   }
+  if(t.dataset.addset){ const sl=t.dataset.addset; state.sets[sl]=Math.min(MAX_SETS, setRows(sl)+1); saveDraft(); renderWorkout(); return; }
+  if(t.dataset.delset){
+    const sl=t.dataset.delset, n=setRows(sl); if(n<=1) return;
+    const x=(state.inputs[sl]||[])[n-1], had = x && ((x.w!=null&&x.w!=="")||(x.r!=null&&x.r!=="")||isNum(x.rpe));
+    const snap=snapshot("Removed set "+n+" of "+curVariant(sl).n);
+    state.sets[sl]=n-1; if(state.inputs[sl]) state.inputs[sl]=state.inputs[sl].slice(0,n-1);
+    if(rpeOpen===sl+":"+(n-1)) rpeOpen=null;
+    saveDraft(); renderWorkout(); if(had) offerUndo(snap, "Removed set "+n); return;
+  }
+  if(t.dataset.rpe){ rpeOpen = rpeOpen===t.dataset.rpe ? null : t.dataset.rpe; renderWorkout(); return; }
+  if(t.dataset.rpeval!=null){
+    const [sl,i,val]=t.dataset.rpeval.split(":"), arr=state.inputs[sl]=state.inputs[sl]||[], k=Number(i);
+    arr[k]=arr[k]||{}; if(val==="") delete arr[k].rpe; else arr[k].rpe=Number(val);
+    rpeOpen=null; saveDraft(); renderWorkout(); return;
+  }
   if(t.dataset.skip){ state.skipped[t.dataset.skip]=true; saveDraft(); renderWorkout(); return; }
   if(t.dataset.unskip){ delete state.skipped[t.dataset.unskip]; saveDraft(); renderWorkout(); return; }
   if(t.dataset.metric){ prefs.pMetric=t.dataset.metric; savePrefs(); renderProgress(); return; }
@@ -733,7 +781,7 @@ document.addEventListener("change", e=>{
   if(el.id==="autofill"){ prefs.autofill=el.checked; savePrefs(); renderWorkout(); return; }
   if(el.tagName==="SELECT" && el.dataset.slot){
     const sl=el.dataset.slot, had=hasData(sl) && !state.skipped[sl], snap=snapshot("Switched "+curVariant(sl).n);
-    state.variant[sl]=Number(el.value); delete state.inputs[sl]; saveDraft(); renderWorkout();
+    state.variant[sl]=Number(el.value); delete state.inputs[sl]; delete state.sets[sl]; saveDraft(); renderWorkout();
     if(had) offerUndo(snap, "Switched exercise: its boxes were emptied");
   }
   else if(el.type==="checkbox" && el.dataset.bag){ const bag = el.dataset.bag==="h"?state.home:state.warm; bag[el.dataset.bag+el.dataset.i]=el.checked; saveDraft(); }
@@ -753,11 +801,11 @@ function doUndo(){
   renderAll(); renderBackup(); renderUndo();
   toast("Undone: "+s.label.charAt(0).toLowerCase()+s.label.slice(1));
 }
-function sessionHasData(){ return !!(state.note && state.note.trim()) || Object.keys(state.skipped).length>0 || Object.keys(state.inputs).some(hasData); }
+function sessionHasData(){ return !!(state.note && state.note.trim()) || Object.keys(state.skipped).length>0 || Object.keys(state.sets).length>0 || Object.keys(state.inputs).some(hasData) || Object.values(state.inputs).some(a=>(a||[]).some(x=>x&&isNum(x.rpe))); }
 function clearSession(){
   if(!sessionHasData()){ toast("Nothing to clear yet."); return; }
   const snap=snapshot("Cleared this session");
-  state.inputs={}; state.skipped={}; state.note=""; state.warm={}; saveDraft();
+  state.inputs={}; state.skipped={}; state.sets={}; state.note=""; state.warm={}; rpeOpen=null; saveDraft();
   renderAll(); offerUndo(snap, "Session cleared");
 }
 
@@ -821,7 +869,7 @@ function findPBs(sets){
   return pbs;
 }
 
-const SW_CACHE = "bb-v2";
+const SW_CACHE = "bb-v3";
 /* ---------- storage: everything lives on this phone ---------- */
 const LOG_KEY = "bb-log", META_KEY = "bb-meta";
 let meta = Object.assign({lastBackup:null}, lsGet(META_KEY)||{});
@@ -840,7 +888,7 @@ function saveGym(){
   const col=collectSets(), pbs=findPBs(col.sets);
   const entry={ id:"s"+Date.now(), kind:"gym", session:state.session, minutes:state.minutes, date:new Date().toISOString(), sets:col.sets, skipped:col.skipped, pbs, note:(state.note||"").trim().slice(0,500) };
   writeEntry(entry);
-  state.inputs={}; state.note=""; state.warm={}; state.skipped={}; state.session = entry.session==="A"?"B":"A";
+  state.inputs={}; state.note=""; state.warm={}; state.skipped={}; state.sets={}; rpeOpen=null; state.session = entry.session==="A"?"B":"A";
   saveDraft(); $("#note").value="";
   renderAll(); window.scrollTo({top:0,behavior:"smooth"});
   if(pbs.length){ undoSnap=snap; renderUndo(); cheer(pbs); }
@@ -957,7 +1005,7 @@ const nameOf = id=>{ const v=variantOf(id); return v ? v.n : id; };
 function buildBackup(){
   const asc=log.slice().reverse();
   const sessions=[["Date","Type","Session","Minutes","Exercises","Skipped","PBs","Note","ID","Saved at"]];
-  const sets=[["Date","Session","Exercise","Version","Set","Weight (kg)","Amount","Unit","Exercise ID","Session ID"]];
+  const sets=[["Date","Session","Exercise","Version","Set","Weight (kg)","Amount","Unit","RPE","Exercise ID","Session ID"]];
   asc.forEach(e=>{
     const d={date:new Date(e.date)};
     if(e.kind==="home"){ sessions.push([d,"Home","","","","","","",e.id,e.date]); return; }
@@ -965,7 +1013,7 @@ function buildBackup(){
     sessions.push([d,"Gym",e.session||"",Number(e.minutes)||"", ids.map(nameOf).join(", "), (e.skipped||[]).map(nameOf).join(", "),
       (e.pbs||[]).map(pb=>`${nameOf(pb.id)} ${setTxt(variantOf(pb.id),pb)}`).join("; "), e.note||"", e.id, e.date]);
     ids.forEach(id=>{ const v=variantOf(id);
-      cleanSets(e.sets[id]).forEach((s,i)=> sets.push([d, e.session||"", v?v.n:id, v&&v.t?v.t:"", i+1, isNum(s.w)?Number(s.w):"", isNum(s.r)?Number(s.r):(s.r||""), v?(v.bw?v.u+" (weight = added load)":v.u):"", id, e.id]));
+      cleanSets(e.sets[id]).forEach((s,i)=> sets.push([d, e.session||"", v?v.n:id, v&&v.t?v.t:"", i+1, isNum(s.w)?Number(s.w):"", isNum(s.r)?Number(s.r):(s.r||""), v?(v.bw?v.u+" (weight = added load)":v.u):"", isNum(s.rpe)?Number(s.rpe):"", id, e.id]));
     });
   });
   const gyms=log.filter(e=>e.kind==="gym").length, homes=log.length-gyms;
@@ -980,7 +1028,7 @@ function buildBackup(){
     {name:"xl/_rels/workbook.xml.rels", text:H+'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+names.map((_,i)=>`<Relationship Id="rId${i+1}" Type="${R}/worksheet" Target="worksheets/sheet${i+1}.xml"/>`).join("")+`<Relationship Id="rId${names.length+1}" Type="${R}/styles" Target="styles.xml"/></Relationships>`},
     {name:"xl/styles.xml", text:H+`<styleSheet ${W}><numFmts count="1"><numFmt numFmtId="164" formatCode="d mmm yyyy hh:mm"/></numFmts><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`},
     {name:"xl/worksheets/sheet1.xml", text:sheetXML(sessions,[17,7,8,8,40,28,36,36,16,26])},
-    {name:"xl/worksheets/sheet2.xml", text:sheetXML(sets,[17,8,34,15,5,11,8,24,12,16])},
+    {name:"xl/worksheets/sheet2.xml", text:sheetXML(sets,[17,8,34,15,5,11,8,24,6,12,16])},
     {name:"xl/worksheets/sheet3.xml", text:sheetXML(about,[70,18])}
   ]);
 }
@@ -1057,7 +1105,7 @@ async function readBackup(file){
     else date=new Date(date).toISOString();
     if(String(r["Type"]||"").toLowerCase()==="home"){ entries.push({id, kind:"home", date}); return; }
     const sets={}, g=setsBy[id]||{};
-    Object.keys(g).forEach(xid=>{ sets[xid]=g[xid].sort((a,b)=>Number(a["Set"])-Number(b["Set"])).map(s=>{ const a=s["Amount"]; return {w:num(s["Weight (kg)"]), r: isNum(a) ? Number(a) : (a==null?"":String(a))}; }); });
+    Object.keys(g).forEach(xid=>{ sets[xid]=g[xid].sort((a,b)=>Number(a["Set"])-Number(b["Set"])).map(s=>{ const a=s["Amount"], o={w:num(s["Weight (kg)"]), r: isNum(a) ? Number(a) : (a==null?"":String(a))}; if(isNum(s["RPE"])) o.rpe=Number(s["RPE"]); return o; }); });
     const skipped=String(r["Skipped"]||"").split(",").map(x=>x.trim()).filter(Boolean).map(n=>byName[n]||n);
     entries.push({id, kind:"gym", session:String(r["Session"]).trim()==="B"?"B":"A", minutes:Number(r["Minutes"])||30, date, sets, skipped, pbs:[], note:String(r["Note"]||"").slice(0,500)});
   });

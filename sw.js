@@ -1,11 +1,12 @@
 /* Offline support: keeps the whole app on the phone after the first visit. Change VERSION when updating the app. */
-const VERSION = "bb-v2";
+const VERSION = "bb-v3";
 const FONTS = "bb-fonts";
 const CORE = ["./", "./index.html", "./jszip.min.js", "./manifest.webmanifest",
   "./icons/icon-192.png", "./icons/icon-512.png", "./icons/maskable-512.png", "./icons/apple-touch-icon.png"];
 
 self.addEventListener("install", e => {
-  e.waitUntil(caches.open(VERSION).then(c => c.addAll(CORE)).then(() => self.skipWaiting()));
+  // cache: "reload" skips the browser's HTTP cache so an update never stores a stale copy of the old files
+  e.waitUntil(caches.open(VERSION).then(c => c.addAll(CORE.map(u => new Request(u, {cache: "reload"})))).then(() => self.skipWaiting()));
 });
 self.addEventListener("activate", e => {
   e.waitUntil(caches.keys()
